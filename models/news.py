@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     String,
@@ -17,10 +18,17 @@ from sqlalchemy.orm import (
 from database.base import Base
 
 
+if TYPE_CHECKING:
+    from models.source import Source
+
+
 class News(Base):
+
     __tablename__ = "news"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
 
     title: Mapped[str] = mapped_column(
         String(500),
@@ -69,6 +77,12 @@ class News(Base):
         nullable=False,
     )
 
+    title_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+    )
+
     is_posted: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -79,4 +93,7 @@ class News(Base):
         nullable=False,
     )
 
-    source = relationship("Source")
+    source: Mapped["Source"] = relationship(
+        "Source",
+        back_populates="news",
+    )
