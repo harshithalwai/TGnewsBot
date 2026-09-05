@@ -6,28 +6,60 @@ from models.telegram_group import TelegramGroup
 
 class TelegramGroupRepository:
 
+    # ============================================================
+    # GET ACTIVE GROUPS
+    # ============================================================
+
     def get_active(self):
 
         with SessionLocal() as session:
 
             stmt = (
                 select(TelegramGroup)
-                .where(TelegramGroup.is_active == True)
+                .where(
+                    TelegramGroup.is_active == True
+                )
+                .order_by(
+                    TelegramGroup.title
+                )
             )
 
-            return session.scalars(stmt).all()
+            return session.scalars(
+                stmt
+            ).all()
 
-    def get_by_chat_id(self, chat_id: int):
+    # ============================================================
+    # GET BY CHAT ID
+    # ============================================================
+
+    def get_by_chat_id(
+        self,
+        chat_id: int,
+    ):
 
         with SessionLocal() as session:
 
-            stmt = select(TelegramGroup).where(
-                TelegramGroup.chat_id == chat_id
+            stmt = (
+                select(TelegramGroup)
+                .where(
+                    TelegramGroup.chat_id == chat_id
+                )
             )
 
-            return session.scalar(stmt)
+            return session.scalar(
+                stmt
+            )
 
-    def create(self, chat_id: int, title: str, chat_type: str):
+    # ============================================================
+    # CREATE
+    # ============================================================
+
+    def create(
+        self,
+        chat_id: int,
+        title: str,
+        chat_type: str,
+    ):
 
         with SessionLocal() as session:
 
@@ -35,10 +67,86 @@ class TelegramGroupRepository:
                 chat_id=chat_id,
                 title=title,
                 chat_type=chat_type,
+                is_active=True,
             )
 
             session.add(group)
+
             session.commit()
+
             session.refresh(group)
 
             return group
+
+    # ============================================================
+    # ACTIVATE / UPDATE
+    # ============================================================
+
+    def activate(
+        self,
+        chat_id: int,
+        title: str,
+        chat_type: str,
+    ):
+
+        with SessionLocal() as session:
+
+            group = session.scalar(
+                select(TelegramGroup)
+                .where(
+                    TelegramGroup.chat_id == chat_id
+                )
+            )
+
+            if not group:
+
+                group = TelegramGroup(
+                    chat_id=chat_id,
+                    title=title,
+                    chat_type=chat_type,
+                    is_active=True,
+                )
+
+                session.add(group)
+
+            else:
+
+                group.title = title
+
+                group.chat_type = chat_type
+
+                group.is_active = True
+
+            session.commit()
+
+            session.refresh(group)
+
+            return group
+
+    # ============================================================
+    # DEACTIVATE
+    # ============================================================
+
+    def deactivate(
+        self,
+        chat_id: int,
+    ):
+
+        with SessionLocal() as session:
+
+            group = session.scalar(
+                select(TelegramGroup)
+                .where(
+                    TelegramGroup.chat_id == chat_id
+                )
+            )
+
+            if group:
+
+                group.is_active = False
+
+                session.commit()
+
+                return True
+
+            return False

@@ -1,7 +1,9 @@
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from pipeline.news_pipeline import NewsPipeline
-from services.news.rss_collector import RSSCollector
+from services.telegram.telegram_discovery import (
+    TelegramDiscoveryService,
+)
 
 
 class SchedulerService:
@@ -10,73 +12,11 @@ class SchedulerService:
 
         self.scheduler = BlockingScheduler()
 
-        self.rss_collector = RSSCollector()
-
         self.pipeline = NewsPipeline()
 
-
-    # ============================================================
-    # MAIN JOB
-    # ============================================================
-
-    def run_job(self):
-
-        print()
-        print("=" * 60)
-        print("SCHEDULED NEWS JOB")
-        print("=" * 60)
-
-
-        # ========================================================
-        # 1. COLLECT RSS
-        # ========================================================
-
-        print()
-        print("Collecting RSS news...")
-
-        try:
-
-            new_articles = (
-                self.rss_collector.collect_all()
-            )
-
-            print(
-                f"RSS collection complete. "
-                f"New articles: {new_articles}"
-            )
-
-        except Exception as exc:
-
-            print(
-                f"RSS collection failed: {exc}"
-            )
-
-            new_articles = 0
-
-
-        # ========================================================
-        # 2. PROCESS ONE NEWS
-        # ========================================================
-
-        print()
-        print("Running AI + Telegram pipeline...")
-
-        try:
-
-            self.pipeline.run()
-
-        except Exception as exc:
-
-            print(
-                f"Pipeline failed: {exc}"
-            )
-
-
-        print()
-        print("=" * 60)
-        print("SCHEDULED NEWS JOB FINISHED")
-        print("=" * 60)
-
+        self.telegram_discovery = (
+            TelegramDiscoveryService()
+        )
 
     # ============================================================
     # START
@@ -84,38 +24,34 @@ class SchedulerService:
 
     def start(self):
 
+        # ========================================================
+        # START TELEGRAM AUTO DISCOVERY
+        # ========================================================
+
         print()
         print("=" * 60)
-        print("AI NEWS BOT")
+        print(
+            "STARTING TELEGRAM AUTO DISCOVERY"
+        )
         print("=" * 60)
 
-        print(
-            "Scheduler Started..."
-        )
+        self.telegram_discovery.start()
 
         print(
-            "Interval: 30 seconds"
+            "Telegram group/channel discovery: ENABLED"
         )
 
-
-        # --------------------------------------------------------
-        # Run immediately
-        # --------------------------------------------------------
-
-        self.run_job()
-
-
-        # --------------------------------------------------------
-        # Schedule
-        # --------------------------------------------------------
+        # ========================================================
+        # NEWS PIPELINE
+        # ========================================================
 
         self.scheduler.add_job(
 
-            self.run_job,
+            self.pipeline.run,
 
             trigger="interval",
 
-            seconds=30,
+            minutes=1,
 
             id="news_pipeline",
 
@@ -124,15 +60,83 @@ class SchedulerService:
             max_instances=1,
 
             coalesce=True,
+
+            misfire_grace_time=30,
         )
 
+        # ========================================================
+        # STARTUP INFORMATION
+        # ========================================================
+
+        print()
+        print("=" * 60)
+        print("NEWS SCHEDULER STARTED")
+        print("=" * 60)
+
+        print(
+            "Pipeline interval: 1 minute"
+        )
+
+        print(
+            "Maximum concurrent pipelines: 1"
+        )
+
+        print(
+            "Telegram auto-discovery: ENABLED"
+        )
+
+        print("=" * 60)
+
+        # ========================================================
+        # RUN IMMEDIATELY
+        # ========================================================
+
+        print()
+        print(
+            "Running initial pipeline..."
+        )
+
+        try:
+
+            self.pipeline.run()
+
+        except Exception as exc:
+
+            print(
+                f"Initial pipeline failed: {exc}"
+            )
+
+        # ========================================================
+        # START SCHEDULER
+        # ========================================================
+
+        print()
+        print(
+            "Waiting for next scheduled run..."
+        )
+
+        print(
+            "Next pipeline run: approximately 1 minute"
+        )
+
+        print()
 
         try:
 
             self.scheduler.start()
 
-        except (KeyboardInterrupt, SystemExit):
+        except (
+            KeyboardInterrupt,
+            SystemExit,
+        ):
 
+            print()
             print(
-                "\nScheduler stopped."
+                "Stopping services..."
+            )
+
+            self.telegram_discovery.stop()
+
+            self.scheduler.shutdown(
+                wait=False
             )
