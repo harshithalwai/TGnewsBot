@@ -28,6 +28,7 @@ class TelegramGroupRepository:
                 stmt
             ).all()
 
+
     # ============================================================
     # GET BY CHAT ID
     # ============================================================
@@ -46,9 +47,8 @@ class TelegramGroupRepository:
                 )
             )
 
-            return session.scalar(
-                stmt
-            )
+            return session.scalar(stmt)
+
 
     # ============================================================
     # CREATE
@@ -62,6 +62,18 @@ class TelegramGroupRepository:
     ):
 
         with SessionLocal() as session:
+
+            # Safety check against duplicate records.
+            existing = session.scalar(
+                select(TelegramGroup).where(
+                    TelegramGroup.chat_id == chat_id
+                )
+            )
+
+            if existing:
+
+                return existing
+
 
             group = TelegramGroup(
                 chat_id=chat_id,
@@ -78,50 +90,37 @@ class TelegramGroupRepository:
 
             return group
 
+
     # ============================================================
-    # ACTIVATE / UPDATE
+    # ACTIVATE
     # ============================================================
 
     def activate(
         self,
         chat_id: int,
-        title: str,
-        chat_type: str,
     ):
 
         with SessionLocal() as session:
 
             group = session.scalar(
-                select(TelegramGroup)
-                .where(
+                select(TelegramGroup).where(
                     TelegramGroup.chat_id == chat_id
                 )
             )
 
             if not group:
 
-                group = TelegramGroup(
-                    chat_id=chat_id,
-                    title=title,
-                    chat_type=chat_type,
-                    is_active=True,
-                )
+                return None
 
-                session.add(group)
 
-            else:
-
-                group.title = title
-
-                group.chat_type = chat_type
-
-                group.is_active = True
+            group.is_active = True
 
             session.commit()
 
             session.refresh(group)
 
             return group
+
 
     # ============================================================
     # DEACTIVATE
@@ -135,18 +134,20 @@ class TelegramGroupRepository:
         with SessionLocal() as session:
 
             group = session.scalar(
-                select(TelegramGroup)
-                .where(
+                select(TelegramGroup).where(
                     TelegramGroup.chat_id == chat_id
                 )
             )
 
-            if group:
+            if not group:
 
-                group.is_active = False
+                return None
 
-                session.commit()
 
-                return True
+            group.is_active = False
 
-            return False
+            session.commit()
+
+            session.refresh(group)
+
+            return group
