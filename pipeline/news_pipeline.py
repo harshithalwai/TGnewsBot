@@ -1,14 +1,29 @@
-from repositories.news_repository import NewsRepository
-from repositories.telegram_group_repository import TelegramGroupRepository
+from loguru import logger
 
-from services.news.article_extractor import ArticleExtractor
 from services.news.rss_collector import RSSCollector
+from services.news.article_extractor import ArticleExtractor
 
 from services.telegram.telegram_service import TelegramService
+
+from repositories.news_repository import NewsRepository
+from repositories.telegram_group_repository import (
+    TelegramGroupRepository,
+)
+
 from services.ai.ollama_service import OllamaService
+from services.ai.schemas import (
+    AIResponse,
+)
 
 
 class NewsPipeline:
+
+    # ============================================================
+    # CONFIGURATION
+    # ============================================================
+
+    # Number of articles processed in one pipeline run.
+    BATCH_SIZE = 5
 
     def __init__(self):
 
@@ -18,180 +33,165 @@ class NewsPipeline:
             TelegramGroupRepository()
         )
 
+        self.collector = RSSCollector()
+
         self.telegram = TelegramService()
 
         self.ai = OllamaService()
 
-        # RSS collector
-        self.rss = RSSCollector()
-
-        # Article extractor
-        self.article_extractor = ArticleExtractor()
-
-
     # ============================================================
-    # BUILD TELEGRAM MESSAGE
+    # RUN
     # ============================================================
 
-    def build_message(
+    def run(self):
+
+        logger.info(
+            "=================================================="
+        )
+
+        logger.info(
+            "NEWS PIPELINE STARTED"
+        )
+
+        # ========================================================
+        # STEP 1
+        # COLLECT NEWS
+        # ========================================================
+
+        try:
+
+            collected = (
+                self.collector.collect_all()
+            )
+
+            logger.info(
+                f"RSS collection added "
+                f"{collected} new articles"
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                f"RSS collection failed: {exc}"
+            )
+
+        # ========================================================
+        # STEP 2
+        # GET ENABLED TELEGRAM CHATS
+        # ========================================================
+
+        groups = (
+            self.group_repo
+            .get_news_enabled_groups()
+        )
+
+        if not groups:
+
+            logger.warning(
+                "No Telegram chats have news enabled."
+            )
+
+            return
+
+        logger.info(
+            f"News enabled chats: {len(groups)}"
+        )
+
+        for group in groups:
+
+            logger.info(
+                f"Target chat: "
+                f"{group.title} | "
+                f"{group.chat_id} | "
+                f"{group.chat_type}"
+            )
+
+        # ========================================================
+        # STEP 3
+        # GET UNPOSTED ARTICLES
+        # ========================================================
+
+        articles = (
+            self.news_repo.get_unposted(
+                limit=self.BATCH_SIZE
+            )
+        )
+
+        if not articles:
+
+            logger.info(
+                "No unposted articles."
+            )
+
+            return
+
+        logger.info(
+            f"Processing {len(articles)} articles"
+        )
+
+        # ========================================================
+        # STEP 4
+        # PROCESS ARTICLES
+        # ========================================================
+
+        for news in articles:
+
+            try:
+
+                self.process_article(
+                    news=news,
+                    groups=groups,
+                )
+
+            except Exception as exc:
+
+                logger.exception(
+                    f"Article processing failed: "
+                    f"{news.title} | {exc}"
+                )
+
+        logger.info(
+            "NEWS PIPELINE FINISHED"
+        )
+
+    # ============================================================
+    # PROCESS ONE ARTICLE
+    # ============================================================
+
+    def process_article(
         self,
         news,
-        ai_result,
+        groups,
     ):
 
-        message = (
-            f"📰 <b>{ai_result.headline or news.title}</b>\n\n"
+        logger.info(
+            f"Processing article: "
+            f"{news.title}"
         )
 
-        message += (
-            f"📂 <b>Category:</b> "
-            f"{ai_result.category or 'General'}\n\n"
+        # ========================================================
+        # EXTRACT ARTICLE
+        # ========================================================
+
+        article_text = (
+            ArticleExtractor.extract(
+                news.url
+            )
         )
 
+        if not article_text:
 
-        # ========================================================
-        # SUMMARY
-        # ========================================================
+            logger.warning(
+                f"Could not extract article: "
+                f"{news.url}"
+            )
 
-        message += (
-            "📝 <b>Summary</b>\n"
-            f"{ai_result.summary or news.summary or 'No summary available.'}\n"
+            return
+
+        logger.info(
+            f"Article extracted: "
+            f"{len(article_text)} characters"
         )
-
-
-        # ========================================================
-        # HIGHLIGHTS
-        # ========================================================
-
-        if ai_result.highlights:
-
-            message += (
-                "\n\n🔹 <b>Key Highlights</b>\n"
-            )
-
-            for item in ai_result.highlights:
-
-                message += (
-                    f"• {item}\n"
-                )
-
-
-        # ========================================================
-        # ANALYSIS SECTIONS
-        # ========================================================
-
-        if ai_result.sections:
-
-            message += (
-                "\n📚 <b>Analysis</b>\n"
-            )
-
-            for section in ai_result.sections:
-
-                message += (
-                    f"• {section}\n"
-                )
-
-
-        # ========================================================
-        # AI EXPLAINS
-        # ========================================================
-
-        if ai_result.ai_explains:
-
-            message += (
-                "\n💡 <b>AI Explains</b>\n"
-                f"{ai_result.ai_explains}\n"
-            )
-
-
-        # ========================================================
-        # EXAM NOTES
-        # ========================================================
-
-        if ai_result.exam_notes:
-
-            message += (
-                "\n🎓 <b>Exam Notes</b>\n"
-            )
-
-            for item in ai_result.exam_notes:
-
-                message += (
-                    f"• {item}\n"
-                )
-
-
-        # ========================================================
-        # INTERVIEW QUESTION
-        # ========================================================
-
-        if ai_result.interview_question:
-
-            question = ai_result.interview_question
-
-
-            if question.question:
-
-                message += (
-                    "\n🎤 <b>Interview Question</b>\n"
-                    f"{question.question}\n"
-                )
-
-
-            if question.answer:
-
-                message += (
-                    f"<b>Answer:</b> "
-                    f"{question.answer}\n"
-                )
-
-
-        # ========================================================
-        # IMPORTANT TERMS
-        # ========================================================
-
-        if ai_result.important_terms:
-
-            message += (
-                "\n🔑 <b>Important Terms</b>\n"
-            )
-
-            for term in ai_result.important_terms:
-
-                message += (
-                    f"• {term}\n"
-                )
-
-
-        # ========================================================
-        # RECOMMENDATIONS
-        # ========================================================
-
-        if ai_result.recommendations:
-
-            message += (
-                "\n✅ <b>Recommendations</b>\n"
-            )
-
-            for recommendation in ai_result.recommendations:
-
-                message += (
-                    f"• {recommendation}\n"
-                )
-
-
-        # ========================================================
-        # HASHTAGS
-        # ========================================================
-
-        if ai_result.hashtags:
-
-            message += (
-                "\n"
-                + " ".join(ai_result.hashtags)
-            )
-
 
         # ========================================================
         # SOURCE
@@ -199,366 +199,411 @@ class NewsPipeline:
 
         source_name = (
             news.source.name
-            if news.source
+            if getattr(news, "source", None)
             else "Unknown"
         )
 
-        message += (
-            "\n\n"
-            f"🔗 <b>Source:</b> {source_name}\n"
-            f"🌐 {news.url}"
-        )
-
-
-        return message
-
-
-    # ============================================================
-    # PROCESS ONE NEWS ARTICLE
-    # ============================================================
-
-    def process_news(
-        self,
-        news,
-        groups,
-    ):
-
-        print()
-        print("=" * 60)
-        print(
-            f"Processing news ID: {news.id}"
-        )
-        print(
-            f"Title: {news.title}"
-        )
-        print(
-            f"Source: "
-            f"{news.source.name if news.source else 'Unknown'}"
-        )
-        print("=" * 60)
-
-
         # ========================================================
-        # 1. EXTRACT ARTICLE
+        # AI GENERATION
         # ========================================================
 
-        print()
-        print(
-            "Extracting article content..."
-        )
+        try:
 
+            ai_response = (
+                self.ai.generate(
+                    title=news.title,
+                    article=article_text,
+                    source=source_name,
+                )
+            )
 
-        article_text = (
-            self.article_extractor.extract(
-                news.url
+        except Exception as exc:
+
+            logger.exception(
+                f"AI generation failed for "
+                f"{news.title}: {exc}"
+            )
+
+            return
+
+        # ========================================================
+        # VERIFY AI RESPONSE
+        # ========================================================
+
+        if not isinstance(
+            ai_response,
+            AIResponse,
+        ):
+
+            logger.error(
+                "AI service did not return "
+                "an AIResponse object."
+            )
+
+            return
+
+        # ========================================================
+        # FORMAT TELEGRAM MESSAGE
+        # ========================================================
+
+        message = (
+            self.format_telegram_message(
+                news,
+                ai_response,
             )
         )
 
-
-        # --------------------------------------------------------
-        # FALLBACK
-        # --------------------------------------------------------
-
-        if not article_text:
-
-            print(
-                "Article extraction failed."
-            )
-
-            print(
-                "Using RSS summary/title as fallback."
-            )
-
-            article_text = (
-                news.summary
-                or news.title
-            )
-
-        else:
-
-            print(
-                "Article extraction successful."
-            )
-
-
-        print(
-            f"Article content length: "
-            f"{len(article_text)} characters"
-        )
-
-
         # ========================================================
-        # 2. AI GENERATION
+        # SEND TO ALL ENABLED CHATS
         # ========================================================
 
-        print()
-        print(
-            "Generating AI content..."
-        )
-
-
-        ai_result = self.ai.generate(
-
-            title=news.title,
-
-            article=article_text,
-
-            source=(
-                news.source.name
-                if news.source
-                else "Unknown"
-            ),
-        )
-
-
-        print(
-            "AI generation successful."
-        )
-
-
-        # ========================================================
-        # 3. BUILD TELEGRAM MESSAGE
-        # ========================================================
-
-        message = self.build_message(
-            news,
-            ai_result,
-        )
-
-
-        print()
-        print(
-            "Generated Telegram message:"
-        )
-        print("-" * 60)
-
-        print(message)
-
-        print("-" * 60)
-
-
-        # ========================================================
-        # 4. SEND TO TELEGRAM
-        # ========================================================
-
-        sent_successfully = True
-
+        success_count = 0
 
         for group in groups:
-
-            print()
-            print(
-                f"Sending to: {group.title}"
-            )
-
 
             try:
 
                 self.telegram.send_message(
-                    group.chat_id,
-                    message,
+                    chat_id=group.chat_id,
+                    message=message,
                 )
 
+                success_count += 1
 
-                print(
-                    f"Sent successfully to "
+                logger.info(
+                    f"Article sent successfully to "
                     f"{group.title}"
                 )
 
-
             except Exception as exc:
 
-                sent_successfully = False
-
-
-                print(
-                    f"Telegram failed for "
+                logger.exception(
+                    f"Failed to send article to "
                     f"{group.title}: {exc}"
                 )
 
-
         # ========================================================
-        # 5. MARK POSTED
+        # MARK POSTED
         # ========================================================
 
-        if sent_successfully:
+        if success_count == len(groups):
 
             self.news_repo.mark_posted(
                 news.id
             )
 
-
-            print()
-            print(
-                f"News {news.id} "
-                f"marked as posted."
+            logger.info(
+                f"Article marked posted: "
+                f"{news.title}"
             )
 
+        else:
 
-            return True
-
-
-        print()
-        print(
-            f"News {news.id} "
-            f"NOT marked as posted."
-        )
-
-        return False
-
+            logger.warning(
+                f"Article NOT marked posted. "
+                f"{success_count}/{len(groups)} "
+                f"chats succeeded."
+            )
 
     # ============================================================
-    # RUN PIPELINE
+    # TELEGRAM FORMAT
     # ============================================================
 
-    def run(self):
+    @staticmethod
+    def format_telegram_message(
+        news,
+        ai: AIResponse,
+    ):
+        """
+        Create a clean and professional Telegram news post.
 
-        print()
-        print("=" * 60)
-        print(
-            "NEWS PIPELINE STARTED"
-        )
-        print("=" * 60)
-
-
-        # ========================================================
-        # 1. COLLECT RSS
-        # ========================================================
-
-        print()
-        print(
-            "Collecting latest RSS news..."
-        )
-
-
-        try:
-
-            new_articles = (
-                self.rss.collect_all()
-            )
-
-
-            print(
-                f"New RSS articles collected: "
-                f"{new_articles}"
-            )
-
-
-        except Exception as exc:
-
-            print(
-                f"⚠️ RSS collection failed: "
-                f"{exc}"
-            )
-
+        The message intentionally keeps the normal post compact.
+        """
 
         # ========================================================
-        # 2. GET ACTIVE TELEGRAM GROUPS
+        # HEADLINE
         # ========================================================
 
-        print()
-        print(
-            "Loading active Telegram groups..."
+        headline = (
+            ai.headline
+            or news.title
+            or "Latest News"
         )
 
-
-        groups = (
-            self.group_repo.get_active()
-        )
-
-
-        if not groups:
-
-            print()
-            print(
-                "❌ No active Telegram groups."
-            )
-
-            return
-
-
-        print(
-            f"Active Telegram groups: "
-            f"{len(groups)}"
-        )
-
-
         # ========================================================
-        # 3. GET ONE UNPOSTED ARTICLE
+        # SUMMARY
         # ========================================================
 
-        print()
-        print(
-            "Looking for unposted news..."
+        summary = (
+            ai.summary
+            or news.summary
+            or ""
         )
 
+        summary = str(summary).strip()
 
-        news_list = (
-            self.news_repo.get_unposted(
-                limit=1
-            )
+        # ========================================================
+        # CATEGORY
+        # ========================================================
+
+        category = (
+            ai.category
+            or getattr(news, "category", None)
+            or "News"
         )
 
+        category = str(category).strip()
 
-        if not news_list:
+        category_lower = category.lower()
 
-            print()
-            print(
-                "No unposted news available."
-            )
+        # ========================================================
+        # CATEGORY ICON
+        # ========================================================
 
-            print()
-            print("=" * 60)
-            print(
-                "NEWS PIPELINE FINISHED"
-            )
-            print("=" * 60)
+        category_icons = {
 
-            return
+            "politics": "🏛️",
+            "political": "🏛️",
 
+            "india": "🇮🇳",
 
-        news = news_list[0]
+            "world": "🌍",
+            "international": "🌍",
 
+            "business": "💼",
+            "economy": "📈",
+            "finance": "💰",
 
-        print()
-        print(
-            f"Selected news ID: "
-            f"{news.id}"
+            "technology": "💻",
+            "technology & ai": "🤖",
+            "tech": "💻",
+            "ai": "🤖",
+            "artificial intelligence": "🤖",
+
+            "science": "🔬",
+
+            "health": "🏥",
+
+            "sports": "🏆",
+
+            "entertainment": "🎬",
+
+            "education": "🎓",
+
+            "environment": "🌱",
+
+            "security": "🛡️",
+            "cybersecurity": "🔐",
+
+            "crime": "🚨",
+
+            "defence": "🪖",
+            "defense": "🪖",
+
+            "weather": "🌦️",
+
+        }
+
+        category_icon = "📰"
+
+        for key, icon in category_icons.items():
+
+            if key in category_lower:
+
+                category_icon = icon
+
+                break
+
+        # ========================================================
+        # MESSAGE START
+        # ========================================================
+
+        message = (
+            f"📰 <b>{headline}</b>\n\n"
+            f"{category_icon} "
+            f"<b>{category.upper()}</b>\n\n"
         )
 
-
         # ========================================================
-        # 4. PROCESS ARTICLE
+        # SUMMARY
         # ========================================================
 
-        try:
+        if summary:
 
-            self.process_news(
-                news,
-                groups,
+            message += (
+                f"{summary}\n\n"
             )
 
-
-        except Exception as exc:
-
-            print()
-            print(
-                f"❌ Failed processing "
-                f"news {news.id}: {exc}"
-            )
-
-            print(
-                "Article remains unposted."
-            )
-
-
         # ========================================================
-        # FINISHED
+        # DIVIDER
         # ========================================================
 
-        print()
-        print("=" * 60)
-        print(
-            "NEWS PIPELINE FINISHED"
+        message += (
+            "━━━━━━━━━━━━━━━━━━\n\n"
         )
-        print("=" * 60)
+
+        # ========================================================
+        # KEY HIGHLIGHTS
+        # ========================================================
+
+        if ai.highlights:
+
+            valid_highlights = [
+                str(item).strip()
+                for item in ai.highlights
+                if item
+            ]
+
+            if valid_highlights:
+
+                message += (
+                    "🔎 <b>KEY HIGHLIGHTS</b>\n\n"
+                )
+
+                for item in valid_highlights[:5]:
+
+                    message += (
+                        f"• {item}\n"
+                    )
+
+                message += "\n"
+
+        # ========================================================
+        # AI EXPLAINS
+        # ========================================================
+
+        if ai.ai_explains:
+
+            explanation = (
+                str(ai.ai_explains).strip()
+            )
+
+            if explanation:
+
+                message += (
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "🧠 <b>AI EXPLAINS</b>\n\n"
+                    f"{explanation}\n\n"
+                )
+
+        # ========================================================
+        # WHY IT MATTERS / ANALYSIS
+        # ========================================================
+
+        if ai.sections:
+
+            valid_sections = [
+                str(item).strip()
+                for item in ai.sections
+                if item
+            ]
+
+            if valid_sections:
+
+                message += (
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "💡 <b>WHY IT MATTERS</b>\n\n"
+                )
+
+                for section in valid_sections[:2]:
+
+                    message += (
+                        f"• {section}\n"
+                    )
+
+                message += "\n"
+
+        # ========================================================
+        # IMPORTANT TERMS
+        # ========================================================
+
+        if ai.important_terms:
+
+            terms = []
+
+            for term in ai.important_terms[:6]:
+
+                if not term:
+                    continue
+
+                clean_term = (
+                    str(term)
+                    .strip()
+                    .replace("`", "")
+                )
+
+                if clean_term:
+
+                    terms.append(
+                        f"<code>{clean_term}</code>"
+                    )
+
+            if terms:
+
+                message += (
+                    "━━━━━━━━━━━━━━━━━━\n\n"
+                    "🏷️ <b>IMPORTANT TERMS</b>\n\n"
+                    + " ".join(terms)
+                    + "\n\n"
+                )
+
+        # ========================================================
+        # SOURCE
+        # ========================================================
+
+        if news.url:
+
+            message += (
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f'🔗 <a href="{news.url}">'
+                f"<b>Read Full Article</b>"
+                f"</a>\n"
+            )
+
+        # ========================================================
+        # HASHTAGS
+        # ========================================================
+
+        if ai.hashtags:
+
+            hashtags = []
+
+            for hashtag in ai.hashtags[:6]:
+
+                if not hashtag:
+                    continue
+
+                clean_hashtag = (
+                    str(hashtag)
+                    .strip()
+                    .replace(" ", "")
+                )
+
+                if not clean_hashtag.startswith("#"):
+
+                    clean_hashtag = (
+                        "#" + clean_hashtag
+                    )
+
+                hashtags.append(
+                    clean_hashtag
+                )
+
+            if hashtags:
+
+                message += (
+                    "\n"
+                    + " ".join(hashtags)
+                    + "\n"
+                )
+
+        # ========================================================
+        # FOOTER
+        # ========================================================
+
+        message += (
+            "\n"
+            "🤖 <b>AI News Agent</b>"
+        )
+
+        return message

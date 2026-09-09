@@ -1,33 +1,12 @@
-from sqlalchemy import select
-
 from database.session import SessionLocal
+
 from models.telegram_group import TelegramGroup
 
 
 class TelegramGroupRepository:
 
-    # ============================================================
-    # GET ACTIVE GROUPS
-    # ============================================================
-
-    def get_active(self):
-
-        with SessionLocal() as session:
-
-            stmt = (
-                select(TelegramGroup)
-                .where(
-                    TelegramGroup.is_active == True
-                )
-                .order_by(
-                    TelegramGroup.title
-                )
-            )
-
-            return session.scalars(
-                stmt
-            ).all()
-
+    def __init__(self):
+        pass
 
     # ============================================================
     # GET BY CHAT ID
@@ -35,20 +14,24 @@ class TelegramGroupRepository:
 
     def get_by_chat_id(
         self,
-        chat_id: int,
+        chat_id,
     ):
 
-        with SessionLocal() as session:
+        db = SessionLocal()
 
-            stmt = (
-                select(TelegramGroup)
-                .where(
+        try:
+
+            return (
+                db.query(TelegramGroup)
+                .filter(
                     TelegramGroup.chat_id == chat_id
                 )
+                .first()
             )
 
-            return session.scalar(stmt)
+        finally:
 
+            db.close()
 
     # ============================================================
     # CREATE
@@ -56,40 +39,41 @@ class TelegramGroupRepository:
 
     def create(
         self,
-        chat_id: int,
-        title: str,
-        chat_type: str,
+        chat_id,
+        title,
+        chat_type,
     ):
 
-        with SessionLocal() as session:
+        db = SessionLocal()
 
-            # Safety check against duplicate records.
-            existing = session.scalar(
-                select(TelegramGroup).where(
-                    TelegramGroup.chat_id == chat_id
-                )
-            )
-
-            if existing:
-
-                return existing
-
+        try:
 
             group = TelegramGroup(
+
                 chat_id=chat_id,
+
                 title=title,
+
                 chat_type=chat_type,
+
                 is_active=True,
+
+                # IMPORTANT:
+                # Newly discovered chats are enabled automatically.
+                news_enabled=True,
             )
 
-            session.add(group)
+            db.add(group)
 
-            session.commit()
+            db.commit()
 
-            session.refresh(group)
+            db.refresh(group)
 
             return group
 
+        finally:
+
+            db.close()
 
     # ============================================================
     # ACTIVATE
@@ -97,30 +81,92 @@ class TelegramGroupRepository:
 
     def activate(
         self,
-        chat_id: int,
+        chat_id,
+        title,
+        chat_type,
     ):
 
-        with SessionLocal() as session:
+        db = SessionLocal()
 
-            group = session.scalar(
-                select(TelegramGroup).where(
+        try:
+
+            group = (
+                db.query(TelegramGroup)
+                .filter(
                     TelegramGroup.chat_id == chat_id
                 )
+                .first()
             )
+
+            # ----------------------------------------------------
+            # CHAT DOES NOT EXIST
+            # ----------------------------------------------------
 
             if not group:
 
-                return None
+                return self._create_in_session(
+                    db=db,
+                    chat_id=chat_id,
+                    title=title,
+                    chat_type=chat_type,
+                )
 
+            # ----------------------------------------------------
+            # CHAT EXISTS
+            # ----------------------------------------------------
 
             group.is_active = True
 
-            session.commit()
+            # IMPORTANT:
+            # Re-activated chats automatically receive news.
+            group.news_enabled = True
 
-            session.refresh(group)
+            group.title = title
+
+            group.chat_type = chat_type
+
+            db.commit()
+
+            db.refresh(group)
 
             return group
 
+        finally:
+
+            db.close()
+
+    # ============================================================
+    # CREATE INSIDE EXISTING SESSION
+    # ============================================================
+
+    @staticmethod
+    def _create_in_session(
+        db,
+        chat_id,
+        title,
+        chat_type,
+    ):
+
+        group = TelegramGroup(
+
+            chat_id=chat_id,
+
+            title=title,
+
+            chat_type=chat_type,
+
+            is_active=True,
+
+            news_enabled=True,
+        )
+
+        db.add(group)
+
+        db.commit()
+
+        db.refresh(group)
+
+        return group
 
     # ============================================================
     # DEACTIVATE
@@ -128,26 +174,128 @@ class TelegramGroupRepository:
 
     def deactivate(
         self,
-        chat_id: int,
+        chat_id,
     ):
 
-        with SessionLocal() as session:
+        db = SessionLocal()
 
-            group = session.scalar(
-                select(TelegramGroup).where(
+        try:
+
+            group = (
+                db.query(TelegramGroup)
+                .filter(
                     TelegramGroup.chat_id == chat_id
                 )
+                .first()
             )
 
             if not group:
 
-                return None
-
+                return False
 
             group.is_active = False
 
-            session.commit()
+            group.news_enabled = False
 
-            session.refresh(group)
+            db.commit()
 
-            return group
+            return True
+
+        finally:
+
+            db.close()
+
+    # ============================================================
+    # ENABLE NEWS
+    # ============================================================
+
+    def enable_news(
+        self,
+        chat_id,
+    ):
+
+        db = SessionLocal()
+
+        try:
+
+            group = (
+                db.query(TelegramGroup)
+                .filter(
+                    TelegramGroup.chat_id == chat_id
+                )
+                .first()
+            )
+
+            if not group:
+
+                return False
+
+            group.news_enabled = True
+
+            group.is_active = True
+
+            db.commit()
+
+            return True
+
+        finally:
+
+            db.close()
+
+    # ============================================================
+    # DISABLE NEWS
+    # ============================================================
+
+    def disable_news(
+        self,
+        chat_id,
+    ):
+
+        db = SessionLocal()
+
+        try:
+
+            group = (
+                db.query(TelegramGroup)
+                .filter(
+                    TelegramGroup.chat_id == chat_id
+                )
+                .first()
+            )
+
+            if not group:
+
+                return False
+
+            group.news_enabled = False
+
+            db.commit()
+
+            return True
+
+        finally:
+
+            db.close()
+
+    # ============================================================
+    # ACTIVE + NEWS ENABLED CHATS
+    # ============================================================
+
+    def get_news_enabled_groups(self):
+
+        db = SessionLocal()
+
+        try:
+
+            return (
+                db.query(TelegramGroup)
+                .filter(
+                    TelegramGroup.is_active.is_(True),
+                    TelegramGroup.news_enabled.is_(True),
+                )
+                .all()
+            )
+
+        finally:
+
+            db.close()

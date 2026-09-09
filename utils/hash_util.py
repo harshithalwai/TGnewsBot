@@ -7,12 +7,22 @@ class HashUtil:
     @staticmethod
     def generate(text: str) -> str:
 
+        if not text:
+            return ""
+
         return hashlib.sha256(
             text.encode("utf-8")
         ).hexdigest()
 
+    # ============================================================
+    # NORMALIZE TITLE
+    # ============================================================
+
     @staticmethod
     def normalize_title(title: str) -> str:
+
+        if not title:
+            return ""
 
         title = title.lower()
 
@@ -29,6 +39,10 @@ class HashUtil:
         )
 
         return title.strip()
+
+    # ============================================================
+    # TITLE HASH
+    # ============================================================
 
     @staticmethod
     def generate_title_hash(title: str) -> str:

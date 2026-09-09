@@ -1,12 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger
-from sqlalchemy import Boolean
-from sqlalchemy import DateTime
-from sqlalchemy import String
-
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Integer,
+    String,
+)
+from sqlalchemy.sql import func
 
 from database.base import Base
 
@@ -15,30 +17,84 @@ class TelegramGroup(Base):
 
     __tablename__ = "telegram_groups"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    # ============================================================
+    # ID
+    # ============================================================
 
-    chat_id: Mapped[int] = mapped_column(
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    # ============================================================
+    # TELEGRAM CHAT ID
+    # ============================================================
+
+    chat_id = Column(
         BigInteger,
         unique=True,
         nullable=False,
     )
 
-    title: Mapped[str] = mapped_column(
+    # ============================================================
+    # CHAT TITLE
+    # ============================================================
+
+    title = Column(
         String(255),
         nullable=False,
     )
 
-    chat_type: Mapped[str] = mapped_column(
+    # ============================================================
+    # CHAT TYPE
+    # ============================================================
+
+    chat_type = Column(
         String(50),
         nullable=False,
     )
 
-    is_active: Mapped[bool] = mapped_column(
+    # ============================================================
+    # ACTIVE
+    # ============================================================
+
+    is_active = Column(
         Boolean,
+        nullable=False,
         default=True,
+        server_default="true",
     )
 
-    created_at: Mapped[datetime] = mapped_column(
+    # ============================================================
+    # NEWS ENABLED
+    # ============================================================
+
+    news_enabled = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+    )
+
+    # ============================================================
+    # CREATED AT
+    # ============================================================
+
+    created_at = Column(
         DateTime,
+        nullable=False,
         default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    # ============================================================
+    # UPDATED AT
+    # ============================================================
+
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=func.now(),
     )

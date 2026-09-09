@@ -15,33 +15,71 @@ class RSSCollector:
 
     REQUEST_TIMEOUT = 10
 
+    USER_AGENT = (
+        "AI-News-Agent/1.0 "
+        "(RSS news aggregation)"
+    )
+
     def __init__(self):
 
         self.news_repo = NewsRepository()
-        self.source_repo = SourceRepository()
+
+        self.source_repo = (
+            SourceRepository()
+        )
+
+    # ============================================================
+    # PUBLISHED DATE
+    # ============================================================
 
     @staticmethod
     def extract_published_at(article):
 
-        published = getattr(article, "published", None)
+        published = getattr(
+            article,
+            "published",
+            None,
+        )
 
         if not published:
+
+            published = getattr(
+                article,
+                "updated",
+                None,
+            )
+
+        if not published:
+
             return None
 
         try:
 
-            dt = parsedate_to_datetime(published)
+            dt = parsedate_to_datetime(
+                published
+            )
 
             if dt.tzinfo is not None:
+
                 dt = dt.astimezone(
                     timezone.utc
-                ).replace(tzinfo=None)
+                ).replace(
+                    tzinfo=None
+                )
 
             return dt
 
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
 
             return None
+
+    # ============================================================
+    # IMAGE
+    # ============================================================
 
     @staticmethod
     def extract_image_url(article):
@@ -54,7 +92,13 @@ class RSSCollector:
 
         if media_thumbnail:
 
-            return media_thumbnail[0].get("url")
+            url = media_thumbnail[0].get(
+                "url"
+            )
+
+            if url:
+
+                return url
 
         for media in getattr(
             article,
@@ -65,9 +109,26 @@ class RSSCollector:
             url = media.get("url")
 
             if url:
+
+                return url
+
+        for enclosure in getattr(
+            article,
+            "enclosures",
+            [],
+        ):
+
+            url = enclosure.get("href")
+
+            if url:
+
                 return url
 
         return None
+
+    # ============================================================
+    # FETCH
+    # ============================================================
 
     def fetch_feed(self, url):
 
@@ -75,10 +136,7 @@ class RSSCollector:
             url,
             timeout=self.REQUEST_TIMEOUT,
             headers={
-                "User-Agent": (
-                    "AI-News-Agent/1.0 "
-                    "(RSS news aggregation)"
-                )
+                "User-Agent": self.USER_AGENT
             },
         )
 
@@ -101,6 +159,10 @@ class RSSCollector:
             )
 
         return feed
+
+    # ============================================================
+    # COLLECT ONE SOURCE
+    # ============================================================
 
     def collect(self, source):
 
@@ -130,19 +192,36 @@ class RSSCollector:
             )
 
             if not url or not title:
+
                 continue
 
-            hash_value = HashUtil.generate(url)
+            hash_value = (
+                HashUtil.generate(url)
+            )
 
-            title_hash = HashUtil.generate_title_hash(title)
-
-            if self.news_repo.exists(hash_value):
-                continue
-
-            if self.news_repo.get_by_title_hash(title_hash):
-                logger.info(
-                    f"Duplicate title skipped: {title}"
+            title_hash = (
+                HashUtil.generate_title_hash(
+                    title
                 )
+            )
+
+            # URL duplicate
+            if self.news_repo.exists(
+                hash_value
+            ):
+
+                continue
+
+            # Title duplicate
+            if self.news_repo.get_by_title_hash(
+                title_hash
+            ):
+
+                logger.debug(
+                    f"Duplicate title skipped: "
+                    f"{title}"
+                )
+
                 continue
 
             summary = getattr(
@@ -186,7 +265,6 @@ class RSSCollector:
                 title_hash=title_hash,
 
                 source_id=source.id,
-
             )
 
             count += 1
@@ -198,6 +276,10 @@ class RSSCollector:
 
         return count
 
+    # ============================================================
+    # COLLECT ALL
+    # ============================================================
+
     def collect_all(self):
 
         sources = (
@@ -208,7 +290,11 @@ class RSSCollector:
 
         for source in sources:
 
-            if source.source_type.lower() != "rss":
+            if (
+                source.source_type.lower()
+                != "rss"
+            ):
+
                 continue
 
             try:

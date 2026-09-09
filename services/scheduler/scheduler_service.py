@@ -1,4 +1,8 @@
-from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
+
+from apscheduler.schedulers.background import (
+    BackgroundScheduler,
+)
 
 from pipeline.news_pipeline import NewsPipeline
 
@@ -7,114 +11,104 @@ class SchedulerService:
 
     def __init__(self):
 
-        self.scheduler = BackgroundScheduler()
+        self.scheduler = (
+            BackgroundScheduler()
+        )
 
-        self.pipeline = NewsPipeline()
+        self.pipeline = (
+            NewsPipeline()
+        )
 
         self.is_running = False
 
-
     # ============================================================
-    # START NEWS
+    # START
     # ============================================================
 
-    def start_news(self):
+    def start_news(
+        self,
+        run_immediately=True,
+    ):
 
-        if self.is_running:
+        # Already running
+        if self.scheduler.get_job(
+            "news_pipeline"
+        ):
 
-            print("News scheduler is already running.")
+            self.is_running = True
 
             return False
 
+        self.scheduler.add_job(
 
-        # --------------------------------------------------------
-        # Add job
-        # --------------------------------------------------------
+            self.pipeline.run,
 
-        if not self.scheduler.get_job("news_pipeline"):
+            trigger="interval",
 
-            self.scheduler.add_job(
+            minutes=1,
 
-                self.pipeline.run,
+            id="news_pipeline",
 
-                trigger="interval",
+            replace_existing=True,
 
-                minutes=1,
+            max_instances=1,
 
-                id="news_pipeline",
+            coalesce=True,
 
-                replace_existing=True,
+            misfire_grace_time=30,
 
-                max_instances=1,
-
-                coalesce=True,
-
-                misfire_grace_time=30,
-            )
-
-
-        # --------------------------------------------------------
-        # Start scheduler
-        # --------------------------------------------------------
+            next_run_time=(
+                datetime.now()
+                if run_immediately
+                else None
+            ),
+        )
 
         if not self.scheduler.running:
 
             self.scheduler.start()
 
-
         self.is_running = True
-
 
         print()
         print("=" * 60)
-        print("NEWS POSTING STARTED")
+        print("NEWS PIPELINE STARTED")
         print("=" * 60)
-
-        print("Pipeline interval: 1 minute")
+        print("Interval: 1 minute")
         print("Maximum concurrent pipelines: 1")
-
+        print("Initial run: IMMEDIATE")
         print("=" * 60)
-
 
         return True
 
-
     # ============================================================
-    # STOP NEWS
+    # STOP
     # ============================================================
 
     def stop_news(self):
-
-        if not self.is_running:
-
-            print("News scheduler is already stopped.")
-
-            return False
-
 
         job = self.scheduler.get_job(
             "news_pipeline"
         )
 
+        if not job:
 
-        if job:
+            self.is_running = False
 
-            self.scheduler.remove_job(
-                "news_pipeline"
-            )
+            return False
 
+        self.scheduler.remove_job(
+            "news_pipeline"
+        )
 
         self.is_running = False
 
-
         print()
         print("=" * 60)
-        print("NEWS POSTING STOPPED")
+        print("NEWS PIPELINE STOPPED")
         print("=" * 60)
 
-
         return True
-
 
     # ============================================================
     # STATUS
@@ -122,32 +116,25 @@ class SchedulerService:
 
     def get_status(self):
 
-        return self.is_running
-
+        return (
+            self.scheduler.get_job(
+                "news_pipeline"
+            )
+            is not None
+        )
 
     # ============================================================
-    # RUN PIPELINE IMMEDIATELY
+    # RUN NOW
     # ============================================================
 
     def run_now(self):
 
-        if not self.is_running:
-
-            print(
-                "News scheduler is stopped."
-            )
-
-            return
-
-
         print()
-        print(
-            "Running news pipeline..."
-        )
-
+        print("Running news pipeline manually...")
 
         self.pipeline.run()
 
+        return True
 
     # ============================================================
     # START PROGRAM
@@ -155,21 +142,6 @@ class SchedulerService:
 
     def start(self):
 
-        # --------------------------------------------------------
-        # START NEWS AUTOMATICALLY
-        # --------------------------------------------------------
-
-        self.start_news()
-
-
-        # --------------------------------------------------------
-        # RUN IMMEDIATELY
-        # --------------------------------------------------------
-
-        print()
-        print(
-            "Running initial pipeline..."
+        return self.start_news(
+            run_immediately=True
         )
-
-
-        self.pipeline.run()

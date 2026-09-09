@@ -51,39 +51,6 @@ class AIResponse(BaseModel):
     )
 
     # ============================================================
-    # INTERVIEW QUESTION VALIDATION
-    # ============================================================
-
-    @field_validator(
-        "interview_question",
-        mode="before",
-    )
-    @classmethod
-    def normalize_interview_question(cls, value):
-
-        if value is None:
-            return None
-
-        # Correct format:
-        # {
-        #     "question": "...",
-        #     "answer": "..."
-        # }
-        if isinstance(value, dict):
-            return value
-
-        # Model sometimes returns:
-        # "What is ...?"
-        if isinstance(value, str):
-
-            return {
-                "question": value,
-                "answer": None,
-            }
-
-        return None
-
-    # ============================================================
     # LIST VALIDATION
     # ============================================================
 

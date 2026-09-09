@@ -1,205 +1,75 @@
-import threading
-import time
-
-import requests
 from loguru import logger
 
-from config.settings import BOT_TOKEN
 from repositories.telegram_group_repository import (
     TelegramGroupRepository,
 )
 
 
 class TelegramDiscoveryService:
+    """
+    Automatically discovers Telegram groups/channels
+    when the bot is added or removed.
 
-    BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-
-    POLL_TIMEOUT = 30
+    Newly discovered chats are automatically enabled
+    for news posting.
+    """
 
     def __init__(self):
 
-        self.group_repo = TelegramGroupRepository()
-
-        self.running = False
-
-        self.thread = None
-
-        self.offset = None
-
-    # ============================================================
-    # START
-    # ============================================================
-
-    def start(self):
-
-        if not BOT_TOKEN:
-
-            raise RuntimeError(
-                "BOT_TOKEN is not configured."
-            )
-
-        if self.running:
-
-            logger.warning(
-                "Telegram discovery is already running."
-            )
-
-            return
-
-        self.running = True
-
-        self.thread = threading.Thread(
-            target=self._run,
-            name="TelegramDiscovery",
-            daemon=True,
+        self.group_repo = (
+            TelegramGroupRepository()
         )
 
-        self.thread.start()
+    # ========================================================
+    # PROCESS MY CHAT MEMBER UPDATE
+    # ========================================================
 
-        logger.info(
-            "Telegram automatic group/channel discovery started."
-        )
+    async def process_my_chat_member(
+        self,
+        update,
+    ):
 
-    # ============================================================
-    # STOP
-    # ============================================================
-
-    def stop(self):
-
-        self.running = False
-
-        logger.info(
-            "Telegram discovery stopped."
-        )
-
-    # ============================================================
-    # MAIN LOOP
-    # ============================================================
-
-    def _run(self):
-
-        logger.info(
-            "Listening for Telegram chat updates..."
-        )
-
-        while self.running:
-
-            try:
-
-                updates = self._get_updates()
-
-                for update in updates:
-
-                    self._process_update(update)
-
-            except Exception as exc:
-
-                logger.exception(
-                    f"Telegram discovery error: {exc}"
-                )
-
-                time.sleep(5)
-
-    # ============================================================
-    # GET UPDATES
-    # ============================================================
-
-    def _get_updates(self):
-
-        params = {
-            "timeout": self.POLL_TIMEOUT,
-            "allowed_updates": [
-                "my_chat_member",
-            ],
-        }
-
-        if self.offset is not None:
-
-            params["offset"] = self.offset
-
-        response = requests.get(
-            f"{self.BASE_URL}/getUpdates",
-            params=params,
-            timeout=self.POLL_TIMEOUT + 10,
-        )
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        if not data.get("ok"):
-
-            raise RuntimeError(
-                f"Telegram getUpdates failed: {data}"
-            )
-
-        updates = data.get(
-            "result",
-            [],
-        )
-
-        if updates:
-
-            self.offset = (
-                updates[-1]["update_id"] + 1
-            )
-
-        return updates
-
-    # ============================================================
-    # PROCESS UPDATE
-    # ============================================================
-
-    def _process_update(self, update):
-
-        member_update = update.get(
-            "my_chat_member"
+        member_update = (
+            update.my_chat_member
         )
 
         if not member_update:
 
-            return
+            return False
 
-        chat = member_update.get(
-            "chat"
+        chat = member_update.chat
+
+        if not chat:
+
+            return False
+
+        new_status = (
+            member_update.new_chat_member.status
         )
 
-        new_chat_member = member_update.get(
-            "new_chat_member"
+        chat_id = chat.id
+
+        chat_type = getattr(
+            chat.type,
+            "value",
+            str(chat.type),
         )
 
-        if not chat or not new_chat_member:
-
-            return
-
-        chat_id = chat.get(
-            "id"
-        )
-
-        chat_type = chat.get(
-            "type",
-            "unknown",
-        )
-
-        title = self._get_chat_title(
-            chat
-        )
-
-        new_status = new_chat_member.get(
-            "status"
+        title = (
+            self._get_chat_title(chat)
         )
 
         logger.info(
-            f"Telegram chat update: "
-            f"{title} | "
-            f"{chat_id} | "
+            f"Telegram chat update | "
+            f"title={title} | "
+            f"chat_id={chat_id} | "
             f"type={chat_type} | "
             f"status={new_status}"
         )
 
-        # ========================================================
-        # BOT ADDED / ACTIVE
-        # ========================================================
+        # ====================================================
+        # BOT ACTIVE
+        # ====================================================
 
         if new_status in (
             "member",
@@ -212,44 +82,56 @@ class TelegramDiscoveryService:
                 chat_type=chat_type,
             )
 
-        # ========================================================
-        # BOT REMOVED
-        # ========================================================
+            return True
 
-        elif new_status in (
+        # ====================================================
+        # BOT REMOVED
+        # ====================================================
+
+        if new_status in (
             "left",
             "kicked",
         ):
 
             self._deactivate_chat(
-                chat_id
+                chat_id=chat_id,
             )
 
-    # ============================================================
-    # CHAT TITLE
-    # ============================================================
+            return False
+
+        return False
+
+    # ========================================================
+    # GET CHAT TITLE
+    # ========================================================
 
     @staticmethod
     def _get_chat_title(chat):
 
-        title = chat.get(
-            "title"
+        title = getattr(
+            chat,
+            "title",
+            None,
         )
 
         if title:
 
             return title
 
-        username = chat.get(
-            "username"
+        username = getattr(
+            chat,
+            "username",
+            None,
         )
 
         if username:
 
             return f"@{username}"
 
-        first_name = chat.get(
-            "first_name"
+        first_name = getattr(
+            chat,
+            "first_name",
+            None,
         )
 
         if first_name:
@@ -258,9 +140,9 @@ class TelegramDiscoveryService:
 
         return "Telegram Chat"
 
-    # ============================================================
+    # ========================================================
     # ACTIVATE CHAT
-    # ============================================================
+    # ========================================================
 
     def _activate_chat(
         self,
@@ -275,10 +157,11 @@ class TelegramDiscoveryService:
             )
         )
 
-        if existing:
+        # ====================================================
+        # EXISTING CHAT
+        # ====================================================
 
-            # Update metadata in case the
-            # Telegram group/channel name changed.
+        if existing:
 
             self.group_repo.activate(
                 chat_id=chat_id,
@@ -293,6 +176,10 @@ class TelegramDiscoveryService:
 
             return
 
+        # ====================================================
+        # NEW CHAT
+        # ====================================================
+
         self.group_repo.create(
             chat_id=chat_id,
             title=title,
@@ -300,13 +187,14 @@ class TelegramDiscoveryService:
         )
 
         logger.info(
-            f"NEW Telegram chat automatically registered: "
+            f"NEW Telegram chat automatically "
+            f"registered and enabled: "
             f"{title} ({chat_id})"
         )
 
-    # ============================================================
+    # ========================================================
     # DEACTIVATE CHAT
-    # ============================================================
+    # ========================================================
 
     def _deactivate_chat(
         self,

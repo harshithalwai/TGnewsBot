@@ -1,7 +1,9 @@
 from telegram import Update
+
 from telegram.ext import (
     Application,
     CommandHandler,
+    ChatMemberHandler,
     ContextTypes,
 )
 
@@ -11,15 +13,28 @@ from repositories.telegram_group_repository import (
     TelegramGroupRepository,
 )
 
+from services.telegram.telegram_discovery import (
+    TelegramDiscoveryService,
+)
+
 
 class TelegramBot:
 
-    def __init__(self, scheduler_service):
+    def __init__(
+        self,
+        scheduler_service,
+    ):
 
-        self.scheduler_service = scheduler_service
+        self.scheduler_service = (
+            scheduler_service
+        )
 
         self.group_repo = (
             TelegramGroupRepository()
+        )
+
+        self.discovery_service = (
+            TelegramDiscoveryService()
         )
 
         self.application = (
@@ -60,6 +75,55 @@ class TelegramBot:
             )
         )
 
+        # ========================================================
+        # CHAT DISCOVERY
+        # ========================================================
+
+        self.application.add_handler(
+            ChatMemberHandler(
+                self.chat_member_update,
+                ChatMemberHandler.MY_CHAT_MEMBER,
+            )
+        )
+
+    # ============================================================
+    # CHAT MEMBER UPDATE
+    # ============================================================
+
+    async def chat_member_update(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ):
+
+        try:
+
+            chat_active = (
+                await self.discovery_service
+                .process_my_chat_member(
+                    update
+                )
+            )
+
+            # Scheduler is already started by main.py.
+            #
+            # We do NOT need to start it here.
+            #
+            # The discovery service only registers
+            # the Telegram chat.
+
+            if chat_active:
+
+                print(
+                    "Telegram chat automatically "
+                    "enabled for news."
+                )
+
+        except Exception as exc:
+
+            print(
+                f"Telegram discovery error: {exc}"
+            )
 
     # ============================================================
     # /START
@@ -74,8 +138,8 @@ class TelegramBot:
         chat = update.effective_chat
 
         if not chat:
-            return
 
+            return
 
         chat_id = chat.id
 
@@ -85,22 +149,11 @@ class TelegramBot:
             or "Telegram Chat"
         )
 
-        chat_type = chat.type
-
-
-        print()
-        print("=" * 60)
-        print("TELEGRAM CHAT DETECTED")
-        print("=" * 60)
-
-        print(f"Chat ID   : {chat_id}")
-        print(f"Title     : {title}")
-        print(f"Chat type : {chat_type}")
-
-
-        # ========================================================
-        # REGISTER / ACTIVATE CHAT
-        # ========================================================
+        chat_type = getattr(
+            chat.type,
+            "value",
+            str(chat.type),
+        )
 
         existing = (
             self.group_repo.get_by_chat_id(
@@ -108,11 +161,16 @@ class TelegramBot:
             )
         )
 
-
         if existing:
 
-            self.group_repo.activate(
+            self.group_repo.enable_news(
                 chat_id
+            )
+
+            self.group_repo.activate(
+                chat_id=chat_id,
+                title=title,
+                chat_type=chat_type,
             )
 
         else:
@@ -123,34 +181,22 @@ class TelegramBot:
                 chat_type=chat_type,
             )
 
+        if update.message:
 
-        # ========================================================
-        # START NEWS SYSTEM
-        # ========================================================
+            await update.message.reply_text(
 
-        self.scheduler_service.start_news()
+                "✅ <b>AI News Bot</b>\n\n"
 
+                f"📢 <b>Chat:</b> {title}\n\n"
 
-        await update.message.reply_text(
+                "📰 News posting is now ACTIVE "
+                "for this chat.\n\n"
 
-            "✅ <b>AI News Bot Started</b>\n\n"
+                "⏱ Automatic news processing is "
+                "already running.",
 
-            f"📢 <b>Chat:</b> {title}\n\n"
-
-            "📰 News posting is now ACTIVE.\n"
-            "⏱ New articles will be processed "
-            "automatically every minute.\n\n"
-
-            "Use /end to stop news posting.",
-
-            parse_mode="HTML",
-        )
-
-
-        print(
-            "Chat registered and news system started."
-        )
-
+                parse_mode="HTML",
+            )
 
     # ============================================================
     # /END
@@ -162,25 +208,34 @@ class TelegramBot:
         context: ContextTypes.DEFAULT_TYPE,
     ):
 
-        self.scheduler_service.stop_news()
+        chat = update.effective_chat
 
+        if not chat:
 
-        await update.message.reply_text(
+            return
 
-            "🛑 <b>AI News Bot Stopped</b>\n\n"
+        chat_id = chat.id
 
-            "Automatic news posting has been stopped.\n\n"
-
-            "Send /start to start it again.",
-
-            parse_mode="HTML",
+        self.group_repo.disable_news(
+            chat_id
         )
 
+        if update.message:
 
-        print(
-            "News system stopped by Telegram command."
-        )
+            await update.message.reply_text(
 
+                "🛑 <b>News Disabled</b>\n\n"
+
+                "Automatic news posting has been "
+                "disabled for this chat.\n\n"
+
+                "Other enabled chats will continue "
+                "receiving news.\n\n"
+
+                "Use /start to enable it again.",
+
+                parse_mode="HTML",
+            )
 
     # ============================================================
     # /STATUS
@@ -192,37 +247,67 @@ class TelegramBot:
         context: ContextTypes.DEFAULT_TYPE,
     ):
 
-        running = (
+        chat = update.effective_chat
+
+        if not chat:
+
+            return
+
+        chat_id = chat.id
+
+        group = (
+            self.group_repo.get_by_chat_id(
+                chat_id
+            )
+        )
+
+        scheduler_running = (
             self.scheduler_service.get_status()
         )
 
+        if not group:
 
-        if running:
+            chat_status = "NOT REGISTERED"
 
-            status = "🟢 RUNNING"
+        elif not group.is_active:
+
+            chat_status = "INACTIVE"
+
+        elif not group.news_enabled:
+
+            chat_status = "NEWS DISABLED"
 
         else:
 
-            status = "🔴 STOPPED"
+            chat_status = "🟢 ACTIVE"
 
-
-        await update.message.reply_text(
-
-            "📊 <b>AI News Bot Status</b>\n\n"
-
-            f"Scheduler: <b>{status}</b>\n\n"
-
-            "⏱ Interval: 1 minute\n\n"
-
-            "Commands:\n"
-            "/start - Start news posting\n"
-            "/end - Stop news posting\n"
-            "/status - Check status\n"
-            "/help - Show help",
-
-            parse_mode="HTML",
+        scheduler_status = (
+            "🟢 RUNNING"
+            if scheduler_running
+            else "🔴 STOPPED"
         )
 
+        if update.message:
+
+            await update.message.reply_text(
+
+                "📊 <b>AI News Bot Status</b>\n\n"
+
+                f"Chat: <b>{chat_status}</b>\n\n"
+
+                f"Scheduler: "
+                f"<b>{scheduler_status}</b>\n\n"
+
+                "⏱ Interval: 1 minute\n\n"
+
+                "Commands:\n"
+                "/start - Enable news\n"
+                "/end - Disable news\n"
+                "/status - Check status\n"
+                "/help - Show help",
+
+                parse_mode="HTML",
+            )
 
     # ============================================================
     # /HELP
@@ -234,28 +319,32 @@ class TelegramBot:
         context: ContextTypes.DEFAULT_TYPE,
     ):
 
-        await update.message.reply_text(
+        if update.message:
 
-            "🤖 <b>AI News Bot</b>\n\n"
+            await update.message.reply_text(
 
-            "/start\n"
-            "Start automatic news posting.\n\n"
+                "🤖 <b>AI News Bot</b>\n\n"
 
-            "/end\n"
-            "Stop automatic news posting.\n\n"
+                "News starts automatically when "
+                "the bot is running.\n\n"
 
-            "/status\n"
-            "Check scheduler status.\n\n"
+                "/start\n"
+                "Enable news for this chat.\n\n"
 
-            "/help\n"
-            "Show this help.",
+                "/end\n"
+                "Disable news for this chat.\n\n"
 
-            parse_mode="HTML",
-        )
+                "/status\n"
+                "Check this chat's status.\n\n"
 
+                "/help\n"
+                "Show this help.",
+
+                parse_mode="HTML",
+            )
 
     # ============================================================
-    # RUN BOT
+    # RUN
     # ============================================================
 
     def run(self):
@@ -266,12 +355,20 @@ class TelegramBot:
         print("=" * 60)
 
         print(
-            "Commands: /start /end /status /help"
+            "Commands: "
+            "/start /end /status /help"
+        )
+
+        print(
+            "Automatic chat discovery: ENABLED"
+        )
+
+        print(
+            "News scheduler: ALREADY RUNNING"
         )
 
         print("=" * 60)
 
-
         self.application.run_polling(
-            drop_pending_updates=True
+            drop_pending_updates=False
         )

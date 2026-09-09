@@ -1,39 +1,44 @@
-from services.scheduler.scheduler_service import SchedulerService
-from services.telegram.telegram_bot import TelegramBot
+from services.scheduler.scheduler_service import (
+    SchedulerService,
+)
+
+from services.telegram.telegram_bot import (
+    TelegramBot,
+)
 
 
 def main():
 
     print()
     print("=" * 60)
-    print("AI TELEGRAM NEWS BOT")
+    print("AI NEWS BOT STARTING")
     print("=" * 60)
-
 
     # ============================================================
     # CREATE SCHEDULER
     # ============================================================
 
-    scheduler = SchedulerService()
-
+    scheduler_service = (
+        SchedulerService()
+    )
 
     # ============================================================
-    # START NEWS SYSTEM
+    # START NEWS AUTOMATICALLY
     # ============================================================
 
-    scheduler.start()
-
+    scheduler_service.start_news(
+        run_immediately=True
+    )
 
     # ============================================================
     # START TELEGRAM BOT
     # ============================================================
 
-    telegram_bot = TelegramBot(
-        scheduler_service=scheduler
+    bot = TelegramBot(
+        scheduler_service
     )
 
-
-    telegram_bot.run()
+    bot.run()
 
 
 if __name__ == "__main__":
